@@ -1,0 +1,311 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use 5.020;
+use feature 'signatures';
+no warnings 'experimental::signatures';
+use DBI;
+use IO::All;
+use Try::Tiny;
+use File::Basename qw(basename);
+use List::MoreUtils 0.416 qw(any_u);
+use Config::Tiny;
+use Getopt::Long;
+
+my $VERSION = 0.1;
+
+my $ampachePath;
+my $verbosity = 0;
+
+# Purpose: Output verbose messages
+sub printv($msg)
+{
+    if ($verbosity)
+    {
+        say $msg;
+    }
+}
+
+# Purpose: Normalize a config value parsed from the ampache config file
+sub normalizeConfigValue ($value)
+{
+    $value =~ s/^"(.+)"$/$1/g;
+    return $value;
+}
+
+# Purpose: Return the path to the ampache installation (autodetect if needed)
+sub getAmpachePath
+{
+    if(defined $ampachePath)
+    {
+        return $ampachePath;
+    }
+    return '/var/www/ampache/';
+}
+
+# Purpose: Return our database handle, create it if needed
+sub dbInit()
+{
+    state $db;
+    if (!defined $db)
+    {
+        my $dbPath = getAmpachePath().'/config/ampache.cfg.php';
+        if (! -e $dbPath)
+        {
+            die('Config file '.$dbPath.': does not exist'."\n");
+        }
+        my $config = Config::Tiny->read( getAmpachePath().'/config/ampache.cfg.php' );
+        $db = DBI->connect('dbi:mysql:'.normalizeConfigValue($config->{_}->{database_name}),
+            normalizeConfigValue($config->{_}->{database_username}),
+            normalizeConfigValue($config->{_}->{database_password})
+        );
+    }
+    return $db;
+}
+
+# Purpose: Return the ampache file id for a file
+sub fileToID ($file)
+{
+    my $db = dbInit();
+    my $sth = $db->prepare('SELECT id FROM song WHERE file=?');
+    $sth->execute($file) or die;
+    my $row = $sth->fetchrow_hashref;
+    if ($row)
+    {
+        return $row->{id};
+    }
+    return;
+}
+
+# Purpose: Return the filename for the supplied file id
+sub IDtoFile ($ID)
+{
+    die('FIXME');
+}
+
+# Purpose: Retrieve the playlist ID from ampache
+sub playlistIDFromFilename($filename,$createIfNeeded = 1)
+{
+    my $name = basename($filename);
+    $name =~ s/\.m3u$//;
+    $name = 'm3u - '.$name;
+    my $db = dbInit();
+    my $sth = $db->prepare('SELECT id FROM playlist WHERE name = ?');
+    $sth->execute($name) or die;
+    my $ret = $sth->fetchrow_hashref;
+    if (!defined $ret)
+    {
+        $name = basename($filename);
+        $name =~ s/\.m3u$//;
+
+        $sth = $db->prepare('SELECT id FROM playlist WHERE name = ?');
+        $sth->execute($name) or die;
+        $ret = $sth->fetchrow_hashref;
+        if (!defined $ret)
+        {
+            if ($createIfNeeded)
+            {
+                return createPlaylist($name,$filename);
+            }
+            else
+            {
+                die;
+            }
+        }
+    }
+    return $ret->{id};
+}
+
+# Purpose: Create a new playlist in ampache
+sub createPlaylist($name,$filename)
+{
+    my $db = dbInit();
+    my $sth = $db->prepare('INSERT INTO playlist (name,user,type,date) VALUES (?,?,?,?)');
+    $sth->execute($name,1,'public',time);
+    printv('Created new playlist for '.$filename);
+    return playlistIDFromFilename($filename,0)
+}
+
+# Purpose: Add or update a track in the database
+sub addTrackToPlaylist($playlistID,$trackID,$trackFname,$no)
+{
+    my $db = dbInit();
+    if(trackInPlaylist($playlistID,$trackID))
+    {
+        my $upd = $db->prepare('UPDATE playlist_data SET track=? WHERE playlist=? AND object_id=? AND object_type="song"');
+        $upd->execute($no,$playlistID,$trackID);
+        return;
+    }
+    printv('Adding '.$trackID.' ['.$trackFname.']');
+    my $sth = $db->prepare('INSERT INTO playlist_data (playlist,object_id,track,object_type) VALUES (?,?,?,?)');
+    $sth->execute($playlistID,$trackID,$no,'song') or die($DBI::errstr);
+}
+
+# Purpose: Check if the supplied trackID is a part of the supplied playlist(ID)
+sub trackInPlaylist ($playlistID,$trackID)
+{
+    my $db = dbInit();
+    my $sth = $db->prepare('SELECT id FROM playlist_data WHERE playlist=? AND object_id=? AND object_type="song"');
+    $sth->execute($playlistID,$trackID);
+    my $res = $sth->fetchall_arrayref;
+    return scalar(@{$res});
+}
+
+# Purpose: Remove a track from a playlist
+sub removeTrackFromPlaylist ($playlistID, $trackID)
+{
+    my $db = dbInit();
+    my $sth = $db->prepare('DELETE FROM playlist_data WHERE playlist=? AND object_id=? AND object_type="song"');
+    return $sth->execute($playlistID,$trackID);
+}
+
+# Purpose: Return all playlist entries for a playlist
+sub playlistEntries($playlistID)
+{
+    my $db = dbInit();
+    my $sth = $db->prepare('SELECT * FROM playlist_data WHERE playlist=? AND object_type="song"');
+    $sth->execute($playlistID) or die;
+    return $sth->fetchall_hashref('id');
+}
+
+# Purpose: Parse an M3U into an array
+sub parseM3U ($file)
+{
+    my @files;
+    foreach my $line (io($file)->slurp)
+    {
+        chomp($line);
+        $line =~ s/^file:\/\///;
+        my $l = io($line);
+        if ($line =~ /^\// && $l->exists && $l->is_file)
+        {
+            push(@files,$line);
+        }
+        elsif(!$l->exists)
+        {
+            printv($line.': does not exist');
+        }
+    }
+    return @files;
+}
+
+# Purpose: Synchronize a single playlist with the database
+sub handlePlaylist($file)
+{
+    my @entries = parseM3U($file);
+    my $pID = playlistIDFromFilename($file);
+    printv('Identified playlist '.$file.' as ID '.$pID);
+    my @presentIDs;
+    my $no = 0;
+    foreach my $entry (@entries)
+    {
+        $no++;
+        my $fID = fileToID($entry);
+        if(defined $fID)
+        {
+            addTrackToPlaylist($pID,$fID,$entry,$no);
+            push(@presentIDs,$fID);
+        }
+    }
+    my $currEntries = playlistEntries($pID);
+    foreach my $entryID (keys %{$currEntries})
+    {
+        my $entry = $currEntries->{$entryID};
+        if (!any_u { $_ eq $entry->{object_id} } @presentIDs)
+        {
+            say 'Removing track '.$entryID;
+            removeTrackFromPlaylist($pID,$entry->{object_id});
+        }
+    }
+}
+
+# Purpose: Print formatted --help output
+# Usage: printHelp('-shortoption', '--longoption', 'description');
+#  Description will be reformatted to fit within a normal terminal
+sub printHelp($short,$long,$desc)
+{
+    # The generated description that will be printed in the end
+    my $GeneratedDesc;
+    # The current line of the description
+    my $currdesc = '';
+    # The maximum length any line can be
+    my $maxlen = 80;
+    # The length the options take up
+    my $optionlen = 23;
+    # Check if the short/long are LONGER than optionlen, if so, we need
+    # to do some additional magic to take up only $maxlen.
+    # The +1 here is because we always add a space between them, no matter what
+    if ((length($short) + length($long) + 1) > $optionlen)
+    {
+        $optionlen = length($short) + length($long) + 1;
+    }
+    # Split the description into lines
+    foreach my $part (split(' ',$desc))
+    {
+        if(defined $GeneratedDesc)
+        {
+            if ((length($currdesc) + length($part) + 1 + 24) > $maxlen)
+            {
+                $GeneratedDesc .= "\n";
+                $currdesc = '';
+            }
+            else
+            {
+                $currdesc .= ' ';
+                $GeneratedDesc .= ' ';
+            }
+        }
+        $currdesc .= $part;
+        $GeneratedDesc .= $part;
+    }
+    # Something went wrong
+    die('Option mismatch') if not $GeneratedDesc;
+    # Print it all
+    foreach my $description (split(/\n/,$GeneratedDesc))
+    {
+        printf "%-4s %-22s %s\n", $short,$long,$description;
+        # Set short and long to '' to ensure we don't print the options twice
+        $short = '';$long = '';
+    }
+    # Succeed
+    return 1;
+}
+
+# Purpose: Output usage information
+sub usage
+{
+    say 'ampache-pl-sync - playlist syncing for ampache';
+    say '';
+    say 'USAGE: '.basename($0).' [OPTIONS] /path/to/playlist1.m3u /playlist2.m3u ..';
+    say '';
+    printHelp('','--help','Output this help text and exit');
+    printHelp('-v','--verbose','Increase verbosity');
+    printHelp('-a','--ampache PATH','Set the path to your ampache installation. If omitted, ampache-pl-sync will attempt to autodetect it');
+}
+
+# Purpose: Handle command-line options and start processing an m3u
+sub main
+{
+    GetOptions(
+        'help' => sub {
+            usage();
+            exit(0);
+        },
+        'a|ampache|ampache-path=s' => \$ampachePath,
+    );
+    if (!@ARGV)
+    {
+        usage();
+        exit(0);
+    }
+    foreach my $playlist (@ARGV)
+    {
+        if (! -e $playlist)
+        {
+            die($playlist.': does not exist'."\n");
+        }
+        handlePlaylist($playlist);
+    }
+}
+
+main(@ARGV);
