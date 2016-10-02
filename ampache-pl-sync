@@ -130,10 +130,13 @@ sub createPlaylist($name,$filename)
 sub addTrackToPlaylist($playlistID,$trackID,$trackFname,$no)
 {
     my $db = dbInit();
-    if(trackInPlaylist($playlistID,$trackID))
+    if(defined(my $track = trackInPlaylist($playlistID,$trackID)))
     {
-        my $upd = $db->prepare('UPDATE playlist_data SET track=? WHERE playlist=? AND object_id=? AND object_type="song"');
-        $upd->execute($no,$playlistID,$trackID);
+        if ($track != $no)
+        {
+            my $upd = $db->prepare('UPDATE playlist_data SET track=? WHERE playlist=? AND object_id=? AND object_type="song"');
+            $upd->execute($no,$playlistID,$trackID);
+        }
         return;
     }
     printv('Adding '.$trackID.' ['.$trackFname.']');
@@ -142,13 +145,18 @@ sub addTrackToPlaylist($playlistID,$trackID,$trackFname,$no)
 }
 
 # Purpose: Check if the supplied trackID is a part of the supplied playlist(ID)
+# Returns undef if not found, "track" if found
 sub trackInPlaylist ($playlistID,$trackID)
 {
     my $db = dbInit();
-    my $sth = $db->prepare('SELECT id FROM playlist_data WHERE playlist=? AND object_id=? AND object_type="song"');
+    my $sth = $db->prepare('SELECT track FROM playlist_data WHERE playlist=? AND object_id=? AND object_type="song"');
     $sth->execute($playlistID,$trackID);
     my $res = $sth->fetchall_arrayref;
-    return scalar(@{$res});
+    if (@{$res} && ref($res->[0]))
+    {
+        return $res->[0]->[0];
+    }
+    return;
 }
 
 # Purpose: Remove a track from a playlist
