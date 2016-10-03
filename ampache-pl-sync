@@ -214,6 +214,10 @@ sub handlePlaylist($file)
             addTrackToPlaylist($pID,$fID,$entry,$no);
             push(@presentIDs,$fID);
         }
+        else
+        {
+            printv('Filed to look up file: '.$entry);
+        }
     }
     my $currEntries = playlistEntries($pID);
     foreach my $entryID (keys %{$currEntries})
@@ -221,7 +225,7 @@ sub handlePlaylist($file)
         my $entry = $currEntries->{$entryID};
         if (!any_u { $_ eq $entry->{object_id} } @presentIDs)
         {
-            say 'Removing track '.$entryID;
+            printv('Removing track '.$entryID);
             removeTrackFromPlaylist($pID,$entry->{object_id});
         }
     }
@@ -300,6 +304,7 @@ sub main
             exit(0);
         },
         'a|ampache|ampache-path=s' => \$ampachePath,
+        'v|verbose' => \$verbosity,
     );
     if (!@ARGV)
     {
