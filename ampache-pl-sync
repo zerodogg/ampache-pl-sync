@@ -176,6 +176,28 @@ sub playlistEntries($playlistID)
     return $sth->fetchall_hashref('id');
 }
 
+# Purpose: Attempt to find the path to a file
+sub findFile ($file,$m3u)
+{
+    $file =~ s{^file://}{};
+    my $currFile = $file;
+    my $entry = io($currFile);
+    my $m3uPath = io(io($m3u)->filepath);
+    while(!$entry->exists || !$entry->is_file)
+    {
+        my @components = io($m3uPath)->splitdir;
+        pop(@components);
+        $m3uPath = join('/',@components);
+        if ($m3uPath eq '/')
+        {
+            return;
+        }
+        $currFile = io($file)->rel2abs($m3uPath);
+        $entry = io($currFile);
+    }
+    return $currFile;
+}
+
 # Purpose: Parse an M3U into an array
 sub parseM3U ($file)
 {
@@ -183,13 +205,12 @@ sub parseM3U ($file)
     foreach my $line (io($file)->slurp)
     {
         chomp($line);
-        $line =~ s/^file:\/\///;
-        my $l = io($line);
-        if ($line =~ /^\// && $l->exists && $l->is_file)
+        my $path = findFile($line,$file);
+        if ($path)
         {
-            push(@files,$line);
+            push(@files,$path);
         }
-        elsif(!$l->exists)
+        else
         {
             printv($line.': does not exist');
         }
