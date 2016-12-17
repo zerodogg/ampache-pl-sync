@@ -11,6 +11,7 @@ use File::Basename qw(basename);
 use List::MoreUtils 0.416 qw(any_u);
 use Config::Tiny;
 use Getopt::Long;
+use Cwd qw(realpath);
 
 my $VERSION = 0.1;
 
@@ -74,6 +75,33 @@ sub fileToID ($file)
     {
         return $row->{id};
     }
+    return;
+}
+
+# Purpose: An intelligent wrapper for fileToID
+sub smartFileToID ($file)
+{
+    # Try the base path
+    my $result = fileToID($file);
+    if (defined $result)
+    {
+        return $result;
+    }
+    # Couldn't find anything, so try to see if we can resolve the DIRECTORY part of it
+    my $modified = realpath(dirname($file)).'/'.basename($file);
+    $result = fileToID($modified);
+    if (defined $result)
+    {
+        return $result;
+    }
+    # Still nothing, try to realpath the entire thing
+    $modified = realpath($file);
+    $result = fileToID($modified);
+    if (defined $result)
+    {
+        return $result;
+    }
+    # Give up
     return;
 }
 
@@ -229,7 +257,7 @@ sub handlePlaylist($file)
     foreach my $entry (@entries)
     {
         $no++;
-        my $fID = fileToID($entry);
+        my $fID = smartFileToID($entry);
         if(defined $fID)
         {
             addTrackToPlaylist($pID,$fID,$entry,$no);
