@@ -265,7 +265,7 @@ sub handlePlaylist($file)
         }
         else
         {
-            printv('Filed to look up file: '.$entry);
+            printv('Failed to look up file: '.$entry);
         }
     }
     my $currEntries = playlistEntries($pID);
