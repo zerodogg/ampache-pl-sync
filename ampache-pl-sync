@@ -7,11 +7,11 @@ no warnings 'experimental::signatures';
 use DBI;
 use IO::All;
 use Try::Tiny;
-use File::Basename qw(basename);
+use File::Basename qw(basename dirname);
 use List::MoreUtils 0.416 qw(any_u);
 use Config::Tiny;
 use Getopt::Long;
-use Cwd qw(realpath);
+use Cwd qw(realpath getcwd);
 
 my $VERSION = 0.1;
 
@@ -96,19 +96,36 @@ sub smartFileToID ($file)
     {
         return $result;
     }
-    # Couldn't find anything, so try to see if we can resolve the DIRECTORY part of it
-    my $modified = realpath(dirname($file)).'/'.basename($file);
-    $result = fileToID($modified);
-    if (defined $result)
+    # Couldn't find anything, so try to see if the path has relative components
+    # (and resolve those)
+    my $modified = dirname($file).'/'.basename($file);
+    if ($modified ne $file)
     {
-        return $result;
+        $result = fileToID($modified);
+        if (defined $result)
+        {
+            return $result;
+        }
+    }
+    # That failed too, try to see if we can resolve the DIRECTORY part of it
+    $modified = realpath(dirname($file)).'/'.basename($file);
+    if ($modified ne $file)
+    {
+        $result = fileToID($modified);
+        if (defined $result)
+        {
+            return $result;
+        }
     }
     # Still nothing, try to realpath the entire thing
     $modified = realpath($file);
-    $result = fileToID($modified);
-    if (defined $result)
+    if ($modified ne $file)
     {
-        return $result;
+        $result = fileToID($modified);
+        if (defined $result)
+        {
+            return $result;
+        }
     }
     # Give up
     return;
@@ -241,6 +258,11 @@ sub findFile ($file,$m3u)
 # Purpose: Parse an M3U into an array
 sub parseM3U ($file)
 {
+    # Attempt to (stupidly) resolve the path to $file
+    if (substr($file,0,1) ne '/')
+    {
+        $file = getcwd().'/'.$file;
+    }
     my @files;
     foreach my $line (io($file)->slurp)
     {
@@ -261,6 +283,7 @@ sub parseM3U ($file)
 # Purpose: Synchronize a single playlist with the database
 sub handlePlaylist($file)
 {
+    printv('Parsing playlist: '.$file);
     my @entries = parseM3U($file);
     my $pID = playlistIDFromFilename($file);
     printv('Identified playlist '.$file.' as ID '.$pID);
