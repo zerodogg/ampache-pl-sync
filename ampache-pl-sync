@@ -27,6 +27,15 @@ sub printv($msg)
     }
 }
 
+# Purpose: Output debugging messages
+sub printd($msg)
+{
+    if ($verbosity > 1)
+    {
+        say $msg;
+    }
+}
+
 # Purpose: Normalize a config value parsed from the ampache config file
 sub normalizeConfigValue ($value)
 {
@@ -353,7 +362,7 @@ sub main
             exit(0);
         },
         'a|ampache|ampache-path=s' => \$ampachePath,
-        'v|verbose' => \$verbosity,
+        'v|verbose+' => \$verbosity,
     );
     if (!@ARGV)
     {
