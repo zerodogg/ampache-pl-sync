@@ -220,15 +220,18 @@ sub findFile ($file,$m3u)
     my $currFile = $file;
     my $entry = io($currFile);
     my $m3uPath = io(io($m3u)->filepath);
+    my $prevM3uPath = '';
     while(!$entry->exists || !$entry->is_file)
     {
         my @components = io($m3uPath)->splitdir;
         pop(@components);
         $m3uPath = join('/',@components);
-        if ($m3uPath eq '/')
+        if ($m3uPath eq '/' || $m3uPath eq '' || $m3uPath eq $prevM3uPath)
         {
+            printd('findFile(): giving up, m3upath is looping ('.$m3uPath.')');
             return;
         }
+        $prevM3uPath = $m3uPath;
         $currFile = io($file)->rel2abs($m3uPath);
         $entry = io($currFile);
     }
