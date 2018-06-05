@@ -1,18 +1,5 @@
-ampache-pl-sync
-===============
+# Moved to GitLab
 
-ampache-pl-sync is a simple program that can sync an M3U file with the
-[Ampache](https://github.com/ampache/ampache) streaming application. It allows
-you to keep a playlist in ampache up to date with a M3U playlist file. This is
-useful if you use other software to create playlists, such as an MPD server,
-that you then want to have available from ampache on the go. Ampache itself can
-import M3U's, but can't update them once imported. ampache-pl-sync solves that.
-It can be used to update playlists that have already been imported through
-ampache's builtin playlist import feature, or it can create a new playlist
-itself.
-
-Dependencies
-------------
-- Perl (version 5.20 or later)
-- The following perl modules: DBI IO::All Try::Tiny List::MoreUtils
-  Config::Tiny
+This repository has moved to GitLab. This is merely an archive of the repository as it
+was before the move - all new development will happen on GitLab and will not
+be pushed to this repo. Visit the current repo [on gitlab: https://gitlab.com/zerodogg/ampache-pl-sync](https://gitlab.com/zerodogg/ampache-pl-sync)
